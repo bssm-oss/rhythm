@@ -86,6 +86,17 @@ python3 scripts/train_chart_model.py \
   --epochs 20
 ```
 
+Resume an interrupted run:
+
+```bash
+python3 scripts/train_chart_model.py \
+  --charts data/djmax_4b_charts.jsonl \
+  --audio-manifest data/audio_manifest.json \
+  --output checkpoints/djmax_4b_baseline.pt \
+  --epochs 20 \
+  --resume
+```
+
 Generate a chart:
 
 ```bash
@@ -95,4 +106,19 @@ python3 scripts/generate_chart.py \
   --title "example" \
   --bpm 132 \
   --output generated/example_4b.json
+```
+
+Evaluate a generated chart:
+
+```bash
+python3 scripts/evaluate_chart.py --chart generated/example_4b.json
+```
+
+Compare it with an original chart:
+
+```bash
+python3 scripts/evaluate_chart.py \
+  --chart generated/example_4b.json \
+  --reference-title "#1f1e33" \
+  --reference-difficulty SC
 ```

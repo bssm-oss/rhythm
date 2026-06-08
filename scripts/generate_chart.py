@@ -24,6 +24,18 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--tap-threshold", type=float, default=0.45)
     parser.add_argument("--hold-threshold", type=float, default=0.50)
+    parser.add_argument(
+        "--tap-thresholds",
+        type=parse_lane_thresholds,
+        help="comma-separated lane thresholds, e.g. 0.72,0.78,0.78,0.72",
+    )
+    parser.add_argument(
+        "--hold-thresholds",
+        type=parse_lane_thresholds,
+        help="comma-separated lane hold thresholds, e.g. 0.18,0.18,0.18,0.18",
+    )
+    parser.add_argument("--min-tap-gap-seconds", type=float, default=0.08)
+    parser.add_argument("--min-hold-seconds", type=float, default=0.20)
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
 
@@ -51,6 +63,10 @@ def main() -> int:
         frame_seconds=audio_config["frame_seconds"],
         tap_threshold=args.tap_threshold,
         hold_threshold=args.hold_threshold,
+        tap_thresholds=args.tap_thresholds,
+        hold_thresholds=args.hold_thresholds,
+        min_tap_gap_seconds=args.min_tap_gap_seconds,
+        min_hold_seconds=args.min_hold_seconds,
     )
 
     chart = {
@@ -64,6 +80,10 @@ def main() -> int:
             "checkpoint": str(args.checkpoint),
             "tapThreshold": args.tap_threshold,
             "holdThreshold": args.hold_threshold,
+            "tapThresholds": args.tap_thresholds,
+            "holdThresholds": args.hold_thresholds,
+            "minTapGapSeconds": args.min_tap_gap_seconds,
+            "minHoldSeconds": args.min_hold_seconds,
         },
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -74,6 +94,13 @@ def main() -> int:
     print(f"events: {len(events)}")
     print(f"output: {args.output}")
     return 0
+
+
+def parse_lane_thresholds(value: str) -> list[float]:
+    thresholds = [float(part.strip()) for part in value.split(",") if part.strip()]
+    if len(thresholds) != 4:
+        raise argparse.ArgumentTypeError("expected exactly 4 comma-separated values")
+    return thresholds
 
 
 def resolve_device(device: str) -> torch.device:

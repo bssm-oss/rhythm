@@ -16,6 +16,8 @@ def logits_to_chart_events(
     frame_seconds: float,
     tap_threshold: float = 0.45,
     hold_threshold: float = 0.50,
+    tap_thresholds: list[float] | tuple[float, ...] | None = None,
+    hold_thresholds: list[float] | tuple[float, ...] | None = None,
     min_tap_gap_seconds: float = 0.08,
     min_hold_seconds: float = 0.20,
 ) -> list[dict]:
@@ -27,9 +29,14 @@ def logits_to_chart_events(
 
     events: list[dict] = []
     hold_starts: set[tuple[int, int]] = set()
+    hold_blocks: dict[int, list[tuple[int, int]]] = {}
+    lane_tap_thresholds = per_lane_thresholds(tap_threshold, tap_thresholds)
+    lane_hold_thresholds = per_lane_thresholds(hold_threshold, hold_thresholds)
 
     for lane_index, lane in enumerate(LANES_4B):
-        active = hold_probs[:, lane_index] >= hold_threshold
+        lane_tap_threshold = lane_tap_thresholds[lane_index]
+        lane_hold_threshold = lane_hold_thresholds[lane_index]
+        active = hold_probs[:, lane_index] >= lane_hold_threshold
         for start, end in active_runs(active):
             if end - start < min_hold_frames:
                 continue
@@ -37,10 +44,13 @@ def logits_to_chart_events(
                 tap_probs[:, lane_index],
                 start,
                 max_search=min_gap * 2,
-                threshold=tap_threshold * 0.65,
+                threshold=lane_tap_threshold * 0.65,
             )
             end_frame = end
             hold_starts.add((lane_index, start_frame))
+            hold_blocks.setdefault(lane_index, []).append(
+                (max(0, start_frame - min_gap), min(len(active), end_frame + min_gap))
+            )
             start_seconds = start_frame * frame_seconds
             end_seconds = end_frame * frame_seconds
             events.append(
@@ -57,8 +67,10 @@ def logits_to_chart_events(
                 }
             )
 
-        for frame in peak_frames(tap_probs[:, lane_index], tap_threshold, min_gap):
+        for frame in peak_frames(tap_probs[:, lane_index], lane_tap_threshold, min_gap):
             if (lane_index, frame) in hold_starts:
+                continue
+            if is_blocked_by_hold(frame, hold_blocks.get(lane_index, [])):
                 continue
             seconds = frame * frame_seconds
             events.append(
@@ -70,8 +82,40 @@ def logits_to_chart_events(
                 }
             )
 
+    events = dedupe_same_lane_events(events)
     events.sort(key=lambda event: (event["beat"], event["lane"], event["type"]))
     return events
+
+
+def per_lane_thresholds(
+    default: float,
+    values: list[float] | tuple[float, ...] | None,
+) -> tuple[float, float, float, float]:
+    if values is None:
+        return (default, default, default, default)
+    if len(values) != len(LANES_4B):
+        raise ValueError(f"expected {len(LANES_4B)} lane thresholds, got {len(values)}")
+    return tuple(float(value) for value in values)  # type: ignore[return-value]
+
+
+def is_blocked_by_hold(frame: int, blocks: list[tuple[int, int]]) -> bool:
+    return any(start <= frame <= end for start, end in blocks)
+
+
+def dedupe_same_lane_events(events: list[dict]) -> list[dict]:
+    best_by_lane_beat: dict[tuple[str, float], dict] = {}
+    for event in events:
+        key = (str(event["lane"]), round(float(event["beat"]), 6))
+        current = best_by_lane_beat.get(key)
+        if current is None or event_priority(event) > event_priority(current):
+            best_by_lane_beat[key] = event
+    return list(best_by_lane_beat.values())
+
+
+def event_priority(event: dict) -> tuple[int, float]:
+    if event["type"] == "hold":
+        return (1, float(event.get("durationBeats", 0.0)))
+    return (0, 0.0)
 
 
 def peak_frames(values: np.ndarray, threshold: float, min_gap: int) -> list[int]:

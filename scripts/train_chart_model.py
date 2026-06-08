@@ -31,6 +31,11 @@ def main() -> int:
     parser.add_argument("--n-mels", type=int, default=96)
     parser.add_argument("--hidden-size", type=int, default=192)
     parser.add_argument("--device", default="auto")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="resume from --output if the checkpoint exists",
+    )
     args = parser.parse_args()
 
     device = resolve_device(args.device)
@@ -53,7 +58,16 @@ def main() -> int:
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
     loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([8, 8, 8, 8, 3, 3, 3, 3], device=device))
 
-    for epoch in range(1, args.epochs + 1):
+    start_epoch = 1
+    if args.resume and args.output.exists():
+        start_epoch = load_checkpoint(args.output, model, optimizer, device) + 1
+        print(f"resuming from epoch={start_epoch}")
+
+    if start_epoch > args.epochs:
+        print(f"checkpoint already reached epoch={start_epoch - 1}; target epochs={args.epochs}")
+        return 0
+
+    for epoch in range(start_epoch, args.epochs + 1):
         model.train()
         total_loss = 0.0
         for features, labels in loader:
@@ -69,7 +83,7 @@ def main() -> int:
 
         avg_loss = total_loss / max(1, len(loader))
         print(f"epoch={epoch} loss={avg_loss:.5f}")
-        save_checkpoint(args.output, model, audio_config, args, epoch, avg_loss)
+        save_checkpoint(args.output, model, optimizer, audio_config, args, epoch, avg_loss)
 
     return 0
 
@@ -87,6 +101,7 @@ def resolve_device(device: str) -> torch.device:
 def save_checkpoint(
     path: Path,
     model: ChartGenerator,
+    optimizer: torch.optim.Optimizer,
     audio_config: AudioConfig,
     args: argparse.Namespace,
     epoch: int,
@@ -101,6 +116,7 @@ def save_checkpoint(
                 "hidden_size": args.hidden_size,
                 "output_size": 8,
             },
+            "optimizer_state": optimizer.state_dict(),
             "audio_config": {
                 "sample_rate": audio_config.sample_rate,
                 "n_fft": audio_config.n_fft,
@@ -113,6 +129,22 @@ def save_checkpoint(
         },
         path,
     )
+
+
+def load_checkpoint(
+    path: Path,
+    model: ChartGenerator,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+) -> int:
+    checkpoint = torch.load(path, map_location=device)
+    model.load_state_dict(checkpoint["model_state"])
+    optimizer_state = checkpoint.get("optimizer_state")
+    if optimizer_state is not None:
+        optimizer.load_state_dict(optimizer_state)
+    else:
+        print("checkpoint has no optimizer_state; resuming with a fresh optimizer")
+    return int(checkpoint.get("epoch", 0))
 
 
 if __name__ == "__main__":
